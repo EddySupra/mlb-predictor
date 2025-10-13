@@ -11,6 +11,7 @@ import requests
 
 app = Flask(__name__)
 
+# FR-02: Team selection options used to populate the Team dropdown on the home page.
 # 30 MLB clubs (id, name, abbr)
 TEAMS: List[Dict[str, Any]] = sorted([
     {"id": 108, "name": "Los Angeles Angels", "abbr": "LAA"},
@@ -49,6 +50,7 @@ FUTURE_STATUSES = {"Scheduled", "Pre-Game", "Warmup", "Delayed Start", "Postpone
 PAST_STATUSES = {"Final", "Game Over"}
 
 # ---------- HELPERS ----------
+# FR-14: Format ISO timestamps to local time; return "TBD" for missing/invalid values.
 def fmt_local(dt_iso: str) -> str:
     if not dt_iso:
         return "TBD"
@@ -70,6 +72,7 @@ def dig(d: Any, path: List[Any], default: Any = None) -> Any:
             return default
     return cur
 
+# FR-18: Utility to choose the first non-empty value, supporting graceful fallbacks.
 def first_nonempty(*vals, default: Any = "") -> Any:
     for v in vals:
         if isinstance(v, str) and v.strip():
@@ -115,6 +118,7 @@ def fetch_raw_game_data(game_id: int) -> dict:
 def fetch_schedule(team_id: Optional[int], days: int, mode: str) -> Dict[str, Any]:
     today = date.today()
     if mode == "past":
+        # FR-16: Build a past window and filter to completed games only.
         start = today - timedelta(days=days)
         end = today
         status_filter = PAST_STATUSES
@@ -305,12 +309,14 @@ INDEX_HTML = """
   <div class="section">
     <h2>Upcoming Games</h2>
     <div class="row">
+      <!-- FR-03: User enters “Days ahead” for future schedule queries. -->
       <label>Days ahead:</label>
       <input id="daysAhead" type="number" min="1" value="10" style="width:90px">
       <button id="loadUpcoming">Load</button>
       <span id="metaUpcoming" class="muted"></span>
     </div>
 
+    <!-- FR-07: Upcoming table columns for Date, Time, Matchup, Venue, Status. -->
     <table id="tblUpcoming" style="display:none">
       <thead>
         <tr>
@@ -325,12 +331,14 @@ INDEX_HTML = """
   <div class="section">
     <h2>Previous Games</h2>
     <div class="row">
+      <!-- FR-05: User enters “Days back” for past schedule queries. -->
       <label>Days back:</label>
       <input id="daysBack" type="number" min="1" value="7" style="width:90px">
       <button id="loadPrevious">Load</button>
       <span id="metaPrevious" class="muted"></span>
     </div>
 
+    <!-- FR-08: Previous table columns for Date, Time, Matchup, Venue, Status. -->
     <table id="tblPrevious" style="display:none">
       <thead>
         <tr>
@@ -345,7 +353,7 @@ INDEX_HTML = """
     const $ = (sel) => document.querySelector(sel);
     const teamSel = $("#team");
 
-    // UPCOMING
+    // FR-04: Clicking “Load” fetches and renders the upcoming (future) schedule.
     async function loadUpcoming() {
       const teamId = teamSel.value;
       const days = parseInt($("#daysAhead").value || "10", 10);
@@ -361,8 +369,10 @@ INDEX_HTML = """
       if (teamId) params.set("teamId", teamId);
 
       const res = await fetch("/api/schedule?" + params.toString());
+      // FR-20: If the request fails, present a user-visible error message.
       if (!res.ok) { meta.textContent = "Error loading schedule"; return; }
       const data = await res.json();
+      // FR-17: Show a meta summary (Team | Window | Rows) after successful load.
       meta.textContent = `Team: ${data.team} | Window: ${data.window} | Rows: ${data.rows.length}`;
 
       if (!data.rows.length) { tbl.style.display = "none"; return; }
@@ -371,6 +381,7 @@ INDEX_HTML = """
         const tr = document.createElement("tr");
         const timeCell = g.time && g.time !== "TBD" ? g.time : "<span class='tbd'>TBD</span>";
         const matchup = `${g.away ?? ""} @ ${g.home ?? ""}`;
+        // FR-09: Matchup is a clickable link to the game details page.
         const qs = new URLSearchParams({ a: g.away ?? "", h: g.home ?? "", v: g.venue ?? "", d: g.date ?? "", t: g.time ?? "" });
         tr.innerHTML = `
           <td>${g.date ?? ""}</td>
@@ -384,7 +395,7 @@ INDEX_HTML = """
       tbl.style.display = "";
     }
 
-    // PREVIOUS
+    // FR-06: Clicking “Load” fetches and renders the previous (past) schedule.
     async function loadPrevious() {
       const teamId = teamSel.value;
       const days = parseInt($("#daysBack").value || "7", 10);
@@ -404,6 +415,7 @@ INDEX_HTML = """
       const data = await res.json();
       meta.textContent = `Team: ${data.team} | Window: ${data.window} | Rows: ${data.rows.length}`;
 
+      // FR-19: Empty-state handling — hide table if there are no rows.
       if (!data.rows.length) { tbl.style.display = "none"; return; }
 
       for (const g of data.rows) {
@@ -494,12 +506,14 @@ GAME_HTML = """
   </style>
 </head>
 <body>
+  <!-- FR-10: Back link to return from details to the home schedule. -->
   <p><a href="/" >&larr; Back to schedule</a></p>
   <h1>{{ title }}</h1>
   <p class="muted">{{ subtitle }}</p>
 
   <div class="grid">
     <div class="card">
+      <!-- FR-11: Details page shows Status, Date/Time, Venue, and Probable Pitchers. -->
       <h2>Meta</h2>
       <div><strong>Status:</strong> {{ status }}</div>
       <div><strong>Date/Time:</strong> {{ when }}</div>
@@ -514,6 +528,7 @@ GAME_HTML = """
     </div>
 
     <div class="card">
+      <!-- FR-12: Display Runs/Hits/Errors totals when available. -->
       <h2>Score (if available)</h2>
       <table>
         <thead>
@@ -527,6 +542,7 @@ GAME_HTML = """
     </div>
 
     <div class="card">
+      <!-- FR-13: Inning-by-inning linescore table (if provided by API). -->
       <h2>Linescore by Inning</h2>
       {% if innings and innings|length > 0 %}
       <table>
@@ -566,10 +582,12 @@ GAME_HTML = """
 """
 
 # ---------- ROUTES ----------
+# FR-01: Home route renders the main schedule UI (index page).
 @app.route("/")
 def index():
     return render_template_string(INDEX_HTML, teams=TEAMS)
 
+# FR-15: JSON API endpoint serving upcoming/past schedules based on query params.
 @app.route("/api/schedule")
 def api_schedule():
     team_id = request.args.get("teamId", type=int)
