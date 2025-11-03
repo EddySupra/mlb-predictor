@@ -81,6 +81,29 @@ def first_nonempty(*vals, default: Any = "") -> Any:
             return v
     return default
 
+# Robust team name -> abbr resolver (handles "Dodgers" vs "Los Angeles Dodgers")
+def team_abbr_from_name(name: str) -> str:
+    if not name:
+        return ""
+    q = name.strip()
+    # 1) Try MLB StatsAPI lookup
+    try:
+        hits = statsapi.lookup_team(q)
+        if hits:
+            active = next((t for t in hits if t.get("active")), hits[0])
+            abbr = active.get("abbreviation") or ""
+            if abbr:
+                return abbr
+    except Exception:
+        pass
+    # 2) Fallback: substring match against our TEAMS constant
+    ql = q.lower()
+    for t in TEAMS:
+        n = t["name"].lower()
+        if ql in n or n in ql:
+            return t["abbr"]
+    return ""
+
 # ---------- DATA FUNCTIONS ----------
 def _rows_from_sched(sched: List[Dict[str, Any]], status_filter: Optional[set]) -> List[Dict[str, Any]]:
     rows: List[Dict[str, Any]] = []
@@ -102,6 +125,7 @@ def _rows_from_sched(sched: List[Dict[str, Any]], status_filter: Optional[set]) 
             "game_pk": g.get("game_id"),
         })
     return rows
+
 def fetch_raw_game_data(game_id: int) -> dict:
     """Directly fetches full game JSON from MLB Stats API."""
     url = f"https://statsapi.mlb.com/api/v1.1/game/{game_id}/feed/live"
@@ -221,7 +245,7 @@ def fetch_game_page(game_id: int, away_hint=None, home_hint=None, venue_hint=Non
     away_h, home_h = safe_int(away_h), safe_int(home_h)
     away_e, home_e = safe_int(away_e), safe_int(home_e)
 
-        # --- Inning-by-inning linescore (supports all API versions)
+    # --- Inning-by-inning linescore (supports all API versions)
     innings_headers, away_innings, home_innings = [], [], []
 
     # First try from linescore() result
@@ -243,7 +267,6 @@ def fetch_game_page(game_id: int, away_hint=None, home_hint=None, venue_hint=Non
         away_innings = ["-"] * 9
         home_innings = ["-"] * 9
 
-
     # Return full page dict
     return {
         "title": f"{away_name} @ {home_name}",
@@ -263,10 +286,6 @@ def fetch_game_page(game_id: int, away_hint=None, home_hint=None, venue_hint=Non
         "home_innings": home_innings,
     }
 
-
-
-
-
 # ---------- HTML ----------
 
 INDEX_HTML = """
@@ -276,19 +295,102 @@ INDEX_HTML = """
   <meta charset="utf-8">
   <title>MLB Schedule</title>
   <meta name="viewport" content="width=device-width, initial-scale=1">
+
+  <!-- Google Font for title -->
+  <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&display=swap" rel="stylesheet">
+
   <style>
-    body { font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; margin: 24px; }
-    .row { display: flex; gap: 12px; flex-wrap: wrap; align-items: center; }
-    select, input, button { padding: 8px 10px; font-size: 14px; }
-    h2 { margin-top: 28px; }
-    table { border-collapse: collapse; width: 100%; margin-top: 12px; }
-    th, td { border: 1px solid #ddd; padding: 8px; font-size: 14px; }
-    th { background: #f5f5f5; text-align: left; }
-    .muted { color: #666; font-size: 13px; margin-left: 8px; }
-    .tbd { color: #777; font-style: italic; }
-    a { color: #0a58ca; text-decoration: none; }
-    a:hover { text-decoration: underline; }
-    .section { margin-top: 20px; }
+    body {
+      font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+      margin: 24px;
+      background-image: url('/static/images/wallpaper.jpeg');
+      background-size: cover;
+      background-position: center;
+      background-attachment: fixed;
+      color: #fff;
+      position: relative;
+      z-index: 0;
+    }
+
+    /* Overlay for readability */
+    body::before {
+      content: "";
+      position: fixed;
+      top: 0; left: 0; right: 0; bottom: 0;
+      background: rgba(0, 0, 0, 0.55);
+      z-index: -1;
+    }
+
+    /* Title fonts */
+    h1, h2 {
+      font-family: 'Bebas Neue', sans-serif;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      text-shadow: 0 2px 4px rgba(0, 0, 0, 0.7);
+    }
+
+    /* Main page title — "MLB Games" */
+    h1 {
+      font-size: 60px;
+      color: #ffffff;
+      letter-spacing: 2px;
+      margin-bottom: 10px;
+    }
+
+    /* Section titles — "Upcoming Games", "Previous Games" */
+    h2 {
+      font-size: 34px;
+      color: #f2f2f2;
+      margin-top: 30px;
+      margin-bottom: 10px;
+    }
+
+    select, input, button {
+      padding: 8px 10px;
+      font-size: 14px;
+      border-radius: 4px;
+      border: 1px solid #ccc;
+    }
+
+    table {
+      border-collapse: collapse;
+      width: 100%;
+      margin-top: 12px;
+      background: rgba(255, 255, 255, 0.1);
+      backdrop-filter: blur(4px);
+      color: #fff;
+    }
+
+    th, td {
+      border: 1px solid rgba(255, 255, 255, 0.3);
+      padding: 8px;
+      font-size: 14px;
+    }
+
+    th {
+      background: rgba(0, 0, 0, 0.4);
+      color: #fff;
+    }
+
+    a {
+      color: #4da3ff;
+      text-decoration: none;
+      font-weight: 500;
+    }
+
+    a:hover {
+      text-decoration: underline;
+    }
+
+    .muted {
+      color: #ddd;
+      font-size: 13px;
+      margin-left: 8px;
+    }
+
+    .section {
+      margin-top: 20px;
+    }
   </style>
 </head>
 <body>
@@ -453,73 +555,135 @@ GAME_HTML = """
   <meta charset="utf-8">
   <title>{{ title }}</title>
   <meta name="viewport" content="width=device-width, initial-scale=1">
+
+  <!-- Match home page font -->
+  <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&display=swap" rel="stylesheet">
+
   <style>
     body {
       font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
       margin: 24px;
+      background-image: url('/static/images/wallpaper.jpeg');
+      background-size: cover;
+      background-position: center;
+      background-attachment: fixed;
+      color: #fff;
+      position: relative;
+      z-index: 0;
     }
+
+    /* dark overlay for readability */
+    body::before {
+      content: "";
+      position: fixed;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.55);
+      z-index: -1;
+    }
+
+    /* faint team logos (more visible & centered) */
+body::after {
+  content: "";
+  position: fixed;
+  inset: 0;
+
+  /* Two logos, symmetrically flanking center */
+  background:
+    url('/static/logos/{{ away_abbr }}.png') no-repeat,
+    url('/static/logos/{{ home_abbr }}.png') no-repeat;
+
+  /* Size each logo ~36% of viewport width (responsive) */
+  background-size: 36vw, 36vw;
+
+  /* Position them around the center line */
+  /* left logo sits a bit left of center; right logo a bit right of center */
+  background-position:
+    calc(50% - 28vw) 58%,
+    calc(50% + 28vw) 58%;
+
+  opacity: 1;
+  filter: contrast(1.05) saturate(0.95);
+  z-index: -2;
+  pointer-events: none;
+}
+
+
+@media (max-width: 900px) {
+  body::after {
+    background-size: 44vw, 44vw;
+    background-position:
+      calc(50% - 34vw) 60%,
+      calc(50% + 34vw) 60%;
+    opacity: 0.28;
+  }
+}
+
+
     a {
-      color: #0a58ca;
+      color: #4da3ff;
       text-decoration: none;
+      font-weight: 500;
     }
-    a:hover {
-      text-decoration: underline;
+    a:hover { text-decoration: underline; }
+
+    .muted { color: #ddd; }
+
+    h1, h2 {
+      font-family: 'Bebas Neue', sans-serif;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      text-shadow: 0 2px 4px rgba(0,0,0,0.7);
+      color: #fff;
     }
-    .muted {
-      color: #666;
-    }
+    h1 { font-size: 44px; letter-spacing: 1.5px; margin-bottom: 8px; }
+    h2 { font-size: 30px; margin: 12px 0 8px; }
+
     .grid {
       display: grid;
       grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
       gap: 16px;
     }
     .card {
-      border: 1px solid #ddd;
-      border-radius: 8px;
+      border: 1px solid rgba(255,255,255,0.25);
+      border-radius: 12px;
       padding: 16px;
+      background: rgba(255,255,255,0.08);
+      backdrop-filter: blur(6px);
+      box-shadow: 0 6px 18px rgba(0,0,0,0.25);
     }
-    h1 {
-      margin: 0 0 6px;
-      font-size: 22px;
-    }
-    h2 {
-      margin: 12px 0 6px;
-      font-size: 18px;
-    }
+
     table {
       border-collapse: collapse;
       width: 100%;
+      color: #fff;
+      background: rgba(255,255,255,0.06);
+      backdrop-filter: blur(4px);
     }
     th, td {
-      border: 1px solid #eee;
-      padding: 6px 8px;
+      border: 1px solid rgba(255,255,255,0.28);
+      padding: 8px;
       font-size: 14px;
       text-align: center;
     }
     th {
-      background: #f8f8f8;
+      background: rgba(0,0,0,0.35);
       text-align: center;
     }
-    .left {
-      text-align: left;
-    }
+    .left { text-align: left; }
   </style>
 </head>
 <body>
-  <!-- FR-10: Back link to return from details to the home schedule. -->
-  <p><a href="/" >&larr; Back to schedule</a></p>
+  <p><a href="/">&larr; Back to schedule</a></p>
   <h1>{{ title }}</h1>
   <p class="muted">{{ subtitle }}</p>
 
   <div class="grid">
     <div class="card">
-      <!-- FR-11: Details page shows Status, Date/Time, Venue, and Probable Pitchers. -->
       <h2>Meta</h2>
       <div><strong>Status:</strong> {{ status }}</div>
       <div><strong>Date/Time:</strong> {{ when }}</div>
       <div><strong>Venue:</strong> {{ venue }}</div>
       <div><strong>Probable Pitchers:</strong> {{ prob_away }} (Away) · {{ prob_home }} (Home)</div>
-
       <p>
         <a href="/game/{{ subtitle.split(':')[-1].strip() }}/charts" target="_blank">
           ⚾ View Advanced Matchup Analytics →
@@ -528,7 +692,6 @@ GAME_HTML = """
     </div>
 
     <div class="card">
-      <!-- FR-12: Display Runs/Hits/Errors totals when available. -->
       <h2>Score (if available)</h2>
       <table>
         <thead>
@@ -542,7 +705,6 @@ GAME_HTML = """
     </div>
 
     <div class="card">
-      <!-- FR-13: Inning-by-inning linescore table (if provided by API). -->
       <h2>Linescore by Inning</h2>
       {% if innings and innings|length > 0 %}
       <table>
@@ -608,7 +770,12 @@ def game_page(game_id: int):
         )
     except Exception:
         abort(404)
-    return render_template_string(GAME_HTML, **page)
+
+    # Robust abbreviation resolution (works with "Dodgers" or "Los Angeles Dodgers")
+    away_abbr = team_abbr_from_name(page.get("away_name"))
+    home_abbr = team_abbr_from_name(page.get("home_name"))
+
+    return render_template_string(GAME_HTML, **page, away_abbr=away_abbr, home_abbr=home_abbr)
 
 # ---------- NEW ANALYTICS ROUTE ----------
 @app.route("/game/<int:game_id>/charts")
@@ -694,7 +861,7 @@ def game_charts(game_id):
         height=400
     )
 
-        # --- 4️⃣ First Inning Run Frequency (Last 20 Games) ---
+    # --- 4️⃣ First Inning Run Frequency (Last 20 Games) ---
     def first_inning_score_ratio(games, side):
         count = total = 0
         for g in games:
@@ -703,7 +870,6 @@ def game_charts(game_id):
             total += 1
             try:
                 lscore = statsapi.linescore(g["game_id"])
-                # ✅ Make sure the response is a dictionary
                 if not isinstance(lscore, dict):
                     continue
                 innings = lscore.get("innings", [])
@@ -718,8 +884,6 @@ def game_charts(game_id):
             except Exception as e:
                 print(f"[WARN] skipping game {g.get('game_id')}: {e}")
                 continue
-
-        print(f"[DEBUG] {side} -> {count}/{total} games with 1st-inning runs")
         return (count / total) * 100 if total > 0 else 0
 
     try:
@@ -730,8 +894,6 @@ def game_charts(game_id):
 
         away_first = first_inning_score_ratio(away_sched, "away")
         home_first = first_inning_score_ratio(home_sched, "home")
-
-        print(f"[DEBUG] {away_name} 1st-inning %: {away_first:.1f}, {home_name}: {home_first:.1f}")
     except Exception as e:
         print("Error computing first-inning stats:", e)
         away_first = home_first = 0
@@ -752,7 +914,6 @@ def game_charts(game_id):
         template="plotly_white",
         height=400
     )
-
 
     # --- Combine HTML ---
     return f"""
