@@ -104,7 +104,97 @@ def team_abbr_from_name(name: str) -> str:
             return t["abbr"]
     return ""
 
+# ---------- WIN PROBABILITY HELPERS ----------
+
+def _team_recent_runs(team_id: int, lookback_days: int = 30, max_games: int = 10):
+    """
+    Returns (avg_runs_scored, avg_runs_allowed, games_count) for the last
+    up-to-`max_games` FINAL games within the past `lookback_days`.
+    """
+    try:
+        today = date.today()
+        start = today - timedelta(days=lookback_days)
+        sched = statsapi.schedule(start_date=start.isoformat(), end_date=today.isoformat(), team=team_id)
+        # Keep only FINAL games, most recent first
+        finals = [g for g in sched if g.get("status") == "Final"]
+        finals.sort(key=lambda x: x.get("game_date", ""), reverse=True)
+        finals = finals[:max_games]
+
+        runs_for, runs_against, cnt = 0, 0, 0
+        for g in finals:
+            try:
+                hid, aid = g.get("home_id"), g.get("away_id")
+                hs, as_ = g.get("home_score"), g.get("away_score")
+                if None in (hid, aid, hs, as_):
+                    continue
+                if team_id == hid:
+                    runs_for += int(hs)
+                    runs_against += int(as_)
+                elif team_id == aid:
+                    runs_for += int(as_)
+                    runs_against += int(hs)
+                else:
+                    continue
+                cnt += 1
+            except Exception:
+                continue
+
+        if cnt == 0:
+            return 0.0, 0.0, 0
+        return runs_for / cnt, runs_against / cnt, cnt
+    except Exception:
+        return 0.0, 0.0, 0
+
+
+def compute_win_probs(away_team_id: Optional[int], home_team_id: Optional[int], home_edge: float = 0.04):
+    """
+    Option 3 heuristic:
+      - away_off = away avg runs scored (last 10)
+      - home_def = home avg runs allowed (last 10)
+      - home_off = home avg runs scored (last 10)
+      - away_def = away avg runs allowed (last 10)
+      score_away = away_off / (away_off + home_def + eps)
+      score_home = home_off / (home_off + away_def + eps)
+      normalize to probabilities; add +home_edge to HOME; clamp; renormalize.
+
+    Returns dict with away/home probabilities (0..1) and a short explanation string.
+    """
+    eps = 1e-6
+    if not away_team_id or not home_team_id:
+        return 0.50, 0.50, "Unavailable team IDs; defaulting to 50–50."
+
+    a_off, a_def, a_cnt = _team_recent_runs(away_team_id)
+    h_off, h_def, h_cnt = _team_recent_runs(home_team_id)
+
+    # If we have zero history, keep it neutral
+    if a_cnt == 0 or h_cnt == 0:
+        return 0.50, 0.50, "Insufficient recent games; defaulting to 50–50."
+
+    score_away = a_off / (a_off + h_def + eps)
+    score_home = h_off / (h_off + a_def + eps)
+
+    base_sum = score_away + score_home
+    if base_sum <= eps:
+        return 0.50, 0.50, "Scores degenerate; defaulting to 50–50."
+
+    p_away = score_away / base_sum
+    p_home = score_home / base_sum
+
+    # Apply home edge
+    p_home = min(max(p_home + home_edge, 0.0), 1.0)
+    p_away = 1.0 - p_home
+
+    explain = (
+        f"Heuristic using last 10 games: "
+        f"OFF (away={a_off:.2f}, home={h_off:.2f}), "
+        f"DEF (away={a_def:.2f}, home={h_def:.2f}) + {int(home_edge*100)}% home edge."
+    )
+    return p_away, p_home, explain
+
+
 # ---------- DATA FUNCTIONS ----------
+
+
 def _rows_from_sched(sched: List[Dict[str, Any]], status_filter: Optional[set]) -> List[Dict[str, Any]]:
     rows: List[Dict[str, Any]] = []
     for g in sched:
@@ -266,6 +356,19 @@ def fetch_game_page(game_id: int, away_hint=None, home_hint=None, venue_hint=Non
         innings_headers = [str(i) for i in range(1, 10)]
         away_innings = ["-"] * 9
         home_innings = ["-"] * 9
+    # --- Team IDs (needed for win probability)
+    away_team_id = dig(box, ["teamInfo", "away", "id"]) or dig(gmeta, ["gameData", "teams", "away", "id"])
+    home_team_id = dig(box, ["teamInfo", "home", "id"]) or dig(gmeta, ["gameData", "teams", "home", "id"])
+
+    # --- Win probability
+    wp_away, wp_home, wp_note = compute_win_probs(
+        away_team_id if isinstance(away_team_id, int) else None,
+        home_team_id if isinstance(home_team_id, int) else None,
+        home_edge=0.04
+    )
+    wp_away_pct = int(round(wp_away * 100))
+    wp_home_pct = 100 - wp_away_pct
+
 
     # Return full page dict
     return {
@@ -284,6 +387,10 @@ def fetch_game_page(game_id: int, away_hint=None, home_hint=None, venue_hint=Non
         "innings": innings_headers,
         "away_innings": away_innings,
         "home_innings": home_innings,
+        "wp_away_pct": wp_away_pct,
+        "wp_home_pct": wp_home_pct,
+        "wp_note": wp_note,
+
     }
 
 # ---------- HTML ----------
@@ -555,125 +662,31 @@ GAME_HTML = """
   <meta charset="utf-8">
   <title>{{ title }}</title>
   <meta name="viewport" content="width=device-width, initial-scale=1">
-
-  <!-- Match home page font -->
-  <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&display=swap" rel="stylesheet">
-
   <style>
-    body {
-      font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
-      margin: 24px;
-      background-image: url('/static/images/wallpaper.jpeg');
-      background-size: cover;
-      background-position: center;
-      background-attachment: fixed;
-      color: #fff;
-      position: relative;
-      z-index: 0;
-    }
-
-    /* dark overlay for readability */
-    body::before {
-      content: "";
-      position: fixed;
-      inset: 0;
-      background: rgba(0, 0, 0, 0.55);
-      z-index: -1;
-    }
-
-    /* faint team logos (more visible & centered) */
-body::after {
-  content: "";
-  position: fixed;
-  inset: 0;
-
-  /* Two logos, symmetrically flanking center */
-  background:
-    url('/static/logos/{{ away_abbr }}.png') no-repeat,
-    url('/static/logos/{{ home_abbr }}.png') no-repeat;
-
-  /* Size each logo ~36% of viewport width (responsive) */
-  background-size: 36vw, 36vw;
-
-  /* Position them around the center line */
-  /* left logo sits a bit left of center; right logo a bit right of center */
-  background-position:
-    calc(50% - 28vw) 58%,
-    calc(50% + 28vw) 58%;
-
-  opacity: 1;
-  filter: contrast(1.05) saturate(0.95);
-  z-index: -2;
-  pointer-events: none;
-}
-
-
-@media (max-width: 900px) {
-  body::after {
-    background-size: 44vw, 44vw;
-    background-position:
-      calc(50% - 34vw) 60%,
-      calc(50% + 34vw) 60%;
-    opacity: 0.28;
-  }
-}
-
-
-    a {
-      color: #4da3ff;
-      text-decoration: none;
-      font-weight: 500;
-    }
+    body { font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; margin: 24px; }
+    a { color: #0a58ca; text-decoration: none; }
     a:hover { text-decoration: underline; }
-
-    .muted { color: #ddd; }
-
-    h1, h2 {
-      font-family: 'Bebas Neue', sans-serif;
-      text-transform: uppercase;
-      letter-spacing: 1px;
-      text-shadow: 0 2px 4px rgba(0,0,0,0.7);
-      color: #fff;
-    }
-    h1 { font-size: 44px; letter-spacing: 1.5px; margin-bottom: 8px; }
-    h2 { font-size: 30px; margin: 12px 0 8px; }
-
-    .grid {
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
-      gap: 16px;
-    }
-    .card {
-      border: 1px solid rgba(255,255,255,0.25);
-      border-radius: 12px;
-      padding: 16px;
-      background: rgba(255,255,255,0.08);
-      backdrop-filter: blur(6px);
-      box-shadow: 0 6px 18px rgba(0,0,0,0.25);
-    }
-
-    table {
-      border-collapse: collapse;
-      width: 100%;
-      color: #fff;
-      background: rgba(255,255,255,0.06);
-      backdrop-filter: blur(4px);
-    }
-    th, td {
-      border: 1px solid rgba(255,255,255,0.28);
-      padding: 8px;
-      font-size: 14px;
-      text-align: center;
-    }
-    th {
-      background: rgba(0,0,0,0.35);
-      text-align: center;
-    }
+    .muted { color: #666; }
+    .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 16px; }
+    .card { border: 1px solid #ddd; border-radius: 8px; padding: 16px; }
+    h1 { margin: 0 0 6px; font-size: 22px; }
+    h2 { margin: 12px 0 6px; font-size: 18px; }
+    table { border-collapse: collapse; width: 100%; }
+    th, td { border: 1px solid #eee; padding: 6px 8px; font-size: 14px; text-align: center; }
+    th { background: #f8f8f8; text-align: center; }
     .left { text-align: left; }
+
+    /* Win probability bar */
+    .wp { margin-top: 10px; }
+    .wp-row { display: flex; justify-content: space-between; font-size: 14px; margin-bottom: 6px; }
+    .wp-bar { width: 100%; height: 14px; background: #f0f2f5; border-radius: 8px; overflow: hidden; }
+    .wp-away { height: 100%; background: #4a90e2; }   /* blue */
+    .wp-home { height: 100%; background: #d0021b; }   /* red */
+    .wp-note { margin-top: 6px; font-size: 12px; color: #666; }
   </style>
 </head>
 <body>
-  <p><a href="/">&larr; Back to schedule</a></p>
+  <p><a href="/" >&larr; Back to schedule</a></p>
   <h1>{{ title }}</h1>
   <p class="muted">{{ subtitle }}</p>
 
@@ -684,7 +697,22 @@ body::after {
       <div><strong>Date/Time:</strong> {{ when }}</div>
       <div><strong>Venue:</strong> {{ venue }}</div>
       <div><strong>Probable Pitchers:</strong> {{ prob_away }} (Away) · {{ prob_home }} (Home)</div>
-      <p>
+
+      <!-- Win Probability block -->
+      <div class="wp">
+        <h2 style="margin-top:14px;">Win Probability (heuristic)</h2>
+        <div class="wp-row">
+          <div><strong>{{ away_name }}</strong>: {{ wp_away_pct }}%</div>
+          <div><strong>{{ home_name }}</strong>: {{ wp_home_pct }}%</div>
+        </div>
+        <div class="wp-bar" aria-label="Win probability split">
+          <div class="wp-away" style="width: {{ wp_away_pct }}%; float:left;"></div>
+          <div class="wp-home" style="width: {{ wp_home_pct }}%; float:left;"></div>
+        </div>
+        <div class="wp-note">{{ wp_note }}</div>
+      </div>
+
+      <p style="margin-top: 14px;">
         <a href="/game/{{ subtitle.split(':')[-1].strip() }}/charts" target="_blank">
           ⚾ View Advanced Matchup Analytics →
         </a>
@@ -694,9 +722,7 @@ body::after {
     <div class="card">
       <h2>Score (if available)</h2>
       <table>
-        <thead>
-          <tr><th class="left">Team</th><th>R</th><th>H</th><th>E</th></tr>
-        </thead>
+        <thead><tr><th class="left">Team</th><th>R</th><th>H</th><th>E</th></tr></thead>
         <tbody>
           <tr><td class="left">{{ away_name }}</td><td>{{ away_r }}</td><td>{{ away_h }}</td><td>{{ away_e }}</td></tr>
           <tr><td class="left">{{ home_name }}</td><td>{{ home_r }}</td><td>{{ home_h }}</td><td>{{ home_e }}</td></tr>
@@ -711,25 +737,19 @@ body::after {
         <thead>
           <tr>
             <th class="left">Team</th>
-            {% for inn in innings %}
-              <th>{{ inn }}</th>
-            {% endfor %}
+            {% for inn in innings %}<th>{{ inn }}</th>{% endfor %}
             <th>R</th><th>H</th><th>E</th>
           </tr>
         </thead>
         <tbody>
           <tr>
             <td class="left">{{ away_name }}</td>
-            {% for r in away_innings %}
-              <td>{{ r }}</td>
-            {% endfor %}
+            {% for r in away_innings %}<td>{{ r }}</td>{% endfor %}
             <td>{{ away_r }}</td><td>{{ away_h }}</td><td>{{ away_e }}</td>
           </tr>
           <tr>
             <td class="left">{{ home_name }}</td>
-            {% for r in home_innings %}
-              <td>{{ r }}</td>
-            {% endfor %}
+            {% for r in home_innings %}<td>{{ r }}</td>{% endfor %}
             <td>{{ home_r }}</td><td>{{ home_h }}</td><td>{{ home_e }}</td>
           </tr>
         </tbody>
