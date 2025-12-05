@@ -1,6 +1,7 @@
-# MLB Outcome Prediction System
+# EZSportsPicks
 
-Web-based application that predicts MLB game outcomes using machine learning and publishes daily predictions to a secure website for logged-in users.
+
+Web-based application that predicts MLB/NBA game outcomes using machine learning and publishes daily predictions to a secure website for logged-in users.
 
 ## Features
 - User auth (view predictions after login)
