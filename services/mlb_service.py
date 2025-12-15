@@ -67,49 +67,33 @@ def _format_game_time(g: Dict[str, Any]) -> str:
 
     try:
         ds = str(dt_raw)
-        # If it's just a date with no time component, we can't do better
         if "T" not in ds:
             return "TBD"
 
-        # Handle trailing 'Z' (UTC) if present
         if ds.endswith("Z"):
             ds = ds[:-1] + "+00:00"
 
         dt = datetime.fromisoformat(ds)
 
-        # Format like '7:05 PM'. lstrip("0") drops a leading zero.
         return dt.strftime("%I:%M %p").lstrip("0")
     except Exception:
         return "TBD"
 def _clean_game_time(g: Dict[str, Any]) -> str:
-    """
-    Normalize the game time for display.
 
-    - If statsapi gives a real local time (e.g. '7:07 PM'), show that.
-    - If it's the placeholder '12:00 AM' (which MLB uses when time
-      isn't set), show 'TBD' instead so we don't mislead the user.
-    """
     raw = str(g.get("game_time") or "").strip()
     if not raw:
         return "TBD"
 
     lower = raw.lower()
-    # Treat '12:00 am' / '12:00am' etc. as "unknown"
     if lower.startswith("12:00") and "am" in lower:
         return "TBD"
 
     return raw
 def fetch_schedule(team_id: Optional[int], days: int, mode: str) -> Dict[str, Any]:
-    """
-    Returns MLB schedule data formatted for your MLB UI.
 
-    mode = "future" → today to today+days      (ascending)
-    mode = "past"   → yesterday back N days   (descending)
-    """
     today = date.today()
 
     if mode == "past":
-        # Example days=7 → from yesterday back to (today-7)
         start = today - timedelta(days=1)
         end = today - timedelta(days=days)
         step = -1
@@ -204,7 +188,7 @@ def _recent_team_trend(team_id: Optional[int], limit: int = 5) -> Dict[str, Any]
     today = date.today()
     cur = today - timedelta(days=1)
     scanned_days = 0
-    max_days = 60  # look back up to ~2 months
+    max_days = 60 
 
     while len(labels) < limit and scanned_days < max_days:
         try:
@@ -245,19 +229,7 @@ def _recent_team_trend(team_id: Optional[int], limit: int = 5) -> Dict[str, Any]
         "avg_runs_against": sum(runs_against) / len(runs_against),
     }
 def _head_to_head_last_n(team_a_id: Optional[int], team_b_id: Optional[int], limit: int = 5) -> Dict[str, Any]:
-    """
-    Last N games where these two teams played each other.
 
-    Returns:
-      {
-        "games": [
-          {"date_label": "11-28", "team_a_runs": 4, "team_b_runs": 2},
-          ...
-        ],
-        "team_a_wins": int,
-        "team_b_wins": int,
-      }
-    """
     result = {
         "games": [],
         "team_a_wins": 0,
@@ -288,7 +260,6 @@ def _head_to_head_last_n(team_a_id: Optional[int], team_b_id: Optional[int], lim
             h_runs = g.get("home_score") or 0
             a_runs = g.get("away_score") or 0
 
-            # normalize as "team_a vs team_b"
             if hid == team_a_id:
                 team_a_runs = h_runs
                 team_b_runs = a_runs
@@ -303,14 +274,13 @@ def _head_to_head_last_n(team_a_id: Optional[int], team_b_id: Optional[int], lim
                     "team_b_runs": int(team_b_runs),
                 }
             )
-            break  # only one game per day between them
+            break  
 
         cur -= timedelta(days=1)
         scanned_days += 1
 
-    games.reverse()  # oldest → newest
+    games.reverse()  
 
-    # compute simple W/L just for display
     team_a_wins = sum(1 for g in games if g["team_a_runs"] > g["team_b_runs"])
     team_b_wins = sum(1 for g in games if g["team_b_runs"] > g["team_a_runs"])
 
@@ -319,11 +289,7 @@ def _head_to_head_last_n(team_a_id: Optional[int], team_b_id: Optional[int], lim
     result["team_b_wins"] = team_b_wins
     return result
 def _parse_ip_to_outs(ip_raw: Any) -> float:
-    """
-    Convert an innings-pitched string like '5.2' (5 and 2/3 innings) into
-    a float number of outs, just so we can pick the pitcher who threw
-    the most. Very defensive so it won't crash.
-    """
+
     if ip_raw is None:
         return 0.0
 
@@ -332,35 +298,19 @@ def _parse_ip_to_outs(ip_raw: Any) -> float:
         if not s:
             return 0.0
 
-        # Typical MLB format: '5.0', '5.1', '5.2'
         if "." in s:
             whole, frac = s.split(".", 1)
             whole_outs = int(whole) * 3
-            frac_outs = int(frac)  # 0, 1 or 2 outs
+            frac_outs = int(frac)
             return float(whole_outs + frac_outs)
         else:
-            # Just innings, no fractional part
             return float(int(s) * 3)
     except Exception:
         return 0.0
 
 
 def _primary_pitcher(team_node: Dict[str, Any]) -> Dict[str, Any]:
-    """
-    Try to find the primary pitcher for a team (roughly: the one who threw
-    the most innings) from statsapi.boxscore_data().
 
-    Returns a dict:
-      {
-        "name": "Pitcher Name",
-        "ip": "5.2",
-        "h": 4,
-        "er": 2,
-        "so": 7,
-        "bb": 1,
-      }
-    If we can't find anything, returns an 'N/A' stub.
-    """
     default = {
         "name": "N/A",
         "ip": "0.0",
@@ -422,9 +372,7 @@ def fetch_game_page(
     date_hint=None,
     time_hint=None,
 ) -> Dict[str, Any]:
-    """
-    Returns boxscore + win prob + inning table + trend data for MLB game page.
-    """
+
     try:
         box = statsapi.boxscore_data(game_id)
     except Exception:
@@ -443,7 +391,6 @@ def fetch_game_page(
     home_abbr = team_abbr_from_name(home_name)
     away_abbr = team_abbr_from_name(away_name)
 
-    # ---- Inning-by-inning linescore ----
     line_score = box.get("innings") or []
     inning_numbers: List[Any] = []
     away_lines: List[Any] = []
@@ -503,7 +450,7 @@ def fetch_game_page(
         wp_away = wp_home = 50
         note = "Status TBD."
 
-    # ---- Predicted winner text (like NBA page) ----
+    # ---- Predicted winner text ----
     if abs(wp_home - wp_away) < 3:
         wp_pick = "Too close to call"
     elif wp_home > wp_away:
@@ -511,7 +458,7 @@ def fetch_game_page(
     else:
         wp_pick = away_name
 
-    # ---- Recent team trends + head-to-head (for charts) ----
+    # ---- Recent team trends + head-to-head ----
     trend_home = _recent_team_trend(home_id)
     trend_away = _recent_team_trend(away_id)
     h2h = _head_to_head_last_n(home_id, away_id, limit=5)
@@ -539,12 +486,12 @@ def fetch_game_page(
         "wp_home_pct": wp_home,
         "wp_away_pct": wp_away,
         "wp_note": note,
-        "wp_pick": wp_pick,          # <<< NEW
-        "home_abbr": home_abbr,      # useful for display
-        "away_abbr": away_abbr,      # useful for display
-        "trend_home": trend_home,    # for charts
-        "trend_away": trend_away,    # for charts
+        "wp_pick": wp_pick,
+        "home_abbr": home_abbr,
+        "away_abbr": away_abbr,
+        "trend_home": trend_home,
+        "trend_away": trend_away,
         "h2h": h2h,
-        "home_pitcher": home_pitcher,   # NEW
-        "away_pitcher": away_pitcher,                   # head-to-head last 5
+        "home_pitcher": home_pitcher,
+        "away_pitcher": away_pitcher,
     }
