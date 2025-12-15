@@ -1,13 +1,11 @@
 # EZSportsPicks
 
 
-Web-based application that predicts MLB/NBA game outcomes using machine learning and publishes daily predictions to a secure website for logged-in users.
+Web-based application that predicts MLB/NBA game outcomes using machine learning and publishes daily predictions
 
 ## Features
-- User auth (view predictions after login)
 - Daily game predictions with win probabilities
 - Historical comparisons & basic visualizations
-- Export predictions to CSV/PDF
 - Reproducible ML pipeline (baseline Logistic Regression + advanced XGBoost)
 
 ## Tech Stack
@@ -19,20 +17,26 @@ Web-based application that predicts MLB/NBA game outcomes using machine learning
 ## Project Structure
 ```
 mlb-predictor/
+├── app.py                      # Flask web app (routes + HTML templates)
+├── requirements.txt            # Python deps
+├── README.md                   # project overview / setup
+├── schedule_cli.py             # CLI to fetch MLB schedules (statsapi)
+├── services/
+│   ├── mlb_service.py          # MLB schedule + game page data (statsapi)
+│   └── nba_service.py          # NBA schedule + game page data (BallDontLie API)
 ├── src/
-│   ├── data.py            # load/validate data
-│   ├── features.py        # rolling stats, matchup features
-│   ├── models.py          # fit_baseline (LR), fit_xgb (XGB), calibration
-│   └── eval.py            # metrics & plots
-├── data/                  # raw & processed data (gitignored)
-├── artifacts/             # saved models (gitignored)
-├── notebooks/             # experiments
-├── reports/               # SRS/SDD, figures
-├── docs/uml/              # UML diagrams (png)
-├── .github/workflows/     # CI
-├── .gitignore
-├── LICENSE
-└── README.md
+│   ├── data.py                 # load/validate historical ML dataset
+│   ├── features.py             # build ML features + target label
+│   ├── models.py               # train LR + XGBoost + calibration + save/load
+│   └── eval.py                 # evaluation plots (calibration curve, etc.)
+├── static/
+│   └── images/                 # backgrounds used by the UI (main.jpeg, wallpaper.jpeg, basketball.jpeg, etc.)
+├── data/
+├── artifacts/                  # saved models (.joblib) 
+├── notebooks/                  # experiments
+├── reports/                    # report docs / figures
+└── docs/
+
 ```
 
 ## Local Setup
