@@ -682,7 +682,7 @@ NBA_HTML = """
 </html>
 """
 # =========================
-# MLB GAME PAGE (unchanged)
+# MLB GAME PAGE
 # =========================
 
 GAME_HTML = """
@@ -1132,7 +1132,7 @@ GAME_HTML = """
 """
 
 # =========================
-# NBA GAME PAGE (unchanged)
+# NBA GAME PAGE
 # =========================
 
 NBA_GAME_HTML = """
@@ -2045,7 +2045,6 @@ def nba_debug_current():
 def game_charts(game_id):
     import datetime
 
-    # 1) Get basic game info from schedule (works for past + future)
     sched = statsapi.schedule(game_id=game_id)
     if not sched:
         abort(404, description=f"Could not load game metadata for {game_id}")
@@ -2063,7 +2062,6 @@ def game_charts(game_id):
     def parse_dt(s: str):
         if not s:
             return None
-        # schedule usually gives ISO string; fall back to just the date part
         try:
             return datetime.datetime.fromisoformat(s.replace("Z", "+00:00"))
         except Exception:
@@ -2077,7 +2075,6 @@ def game_charts(game_id):
     base_date = game_start.date() if game_start else today
     lookback_start = base_date - datetime.timedelta(days=365)
 
-    # 2) Pull last ~40 days of games for each team
     try:
         home_sched = statsapi.schedule(
             start_date=lookback_start.isoformat(),
@@ -2093,7 +2090,6 @@ def game_charts(game_id):
         home_sched = []
         away_sched = []
 
-    # ---------- helpers for stats from past games ----------
 
     def batting_avg(stats):
         ab = stats.get("atBats", 0) or stats.get("ab", 0) or 0
@@ -2112,7 +2108,6 @@ def game_charts(game_id):
 
         outs = stats.get("outs") or 0
 
-        # Fallback: inningsPitched like '5.2' → 5 innings + 2 outs
         if outs <= 0:
             ip_str = stats.get("inningsPitched") or stats.get("ip")
             if isinstance(ip_str, str) and ip_str:
@@ -2129,9 +2124,7 @@ def game_charts(game_id):
         return 9.0 * er / ip
 
     def recent_team_batting(sched, team_id, max_games=10):
-        """
-        Last ~max_games for THIS team only, using boxscore_data for each game.
-        """
+
         games = [g for g in sched if g.get("status") == "Final"]
         games.sort(key=lambda x: x.get("game_date", ""), reverse=True)
         games = games[:max_games]
@@ -2195,10 +2188,7 @@ def game_charts(game_id):
         return rf / cnt, ra / cnt
 
     def avg_recent_era(sched, team_id, max_games=10):
-        """
-        Average ERA over last ~max_games for THIS team only,
-        again using boxscore_data for each game.
-        """
+
         games = [g for g in sched if g.get("status") == "Final"]
         games.sort(key=lambda x: x.get("game_date", ""), reverse=True)
         games = games[:max_games]
@@ -2236,10 +2226,7 @@ def game_charts(game_id):
         return sum(eras) / len(eras)
 
     def first_inning_score_ratio(sched, team_id, max_games=30):
-        """
-        % of recent games where THIS team scored in the 1st inning.
-        Uses boxscore_data to read the first-inning runs.
-        """
+
         games = [g for g in sched if g.get("status") == "Final"]
         games.sort(key=lambda x: x.get("game_date", ""), reverse=True)
         games = games[:max_games]
@@ -2281,7 +2268,6 @@ def game_charts(game_id):
             return 0.0
         return 100.0 * scored / total
 
-    # 3) Compute all stats from those schedules
     away_ba = recent_team_batting(away_sched, away_id)
     home_ba = recent_team_batting(home_sched, home_id)
     away_era = avg_recent_era(away_sched, away_id)
@@ -2291,7 +2277,6 @@ def game_charts(game_id):
     away_first = first_inning_score_ratio(away_sched, away_id)
     home_first = first_inning_score_ratio(home_sched, home_id)
 
-    # 4) Build Plotly figures (same as you already had)
     fig1 = go.Figure(
         [go.Bar(
             x=[away_abbr, home_abbr],
